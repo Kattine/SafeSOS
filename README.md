@@ -1,4 +1,4 @@
-# Silent-SOS: Reliable Static Gesture Recognition for Emergency Communication
+# SafeSOS: Reliable Static Gesture Recognition for Emergency Communication
 
 > A computer-vision system for silent emergency communication, with built-in
 > **selective prediction** to abstain when uncertain — designed for high-stakes
@@ -40,7 +40,7 @@ python scripts/train_pipeline.py
 python main.py
 ```
 
-Live demo: https://huggingface.co/spaces/<your-username>/silent-sos
+Live demo: https://huggingface.co/spaces/zkmine/safesos
 
 ## 📊 Models Implemented
 | Model | Approach | Where |
@@ -56,7 +56,7 @@ See `reports/` for the full Risk-Coverage curve and robustness analysis
 under blur / low-light / occlusion perturbations.
 
 ## 📄 Report
-See `reports/silent_sos_report.pdf` for the full technical write-up.
+See `reports/safesos_report.pdf` for the full technical write-up.
 
 ## ⚖️ Ethics
 This system is a research prototype. It is NOT a substitute for human
