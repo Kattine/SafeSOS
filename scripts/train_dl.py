@@ -1,8 +1,18 @@
-"""Train MobileNetV3-Small on SafeSOS gesture classes.
+"""
+Train MobileNetV3-Small on the 9+1-class SafeSOS gesture problem.
 
-Pipeline: build loaders, fine-tune, calibrate temperature, save artifacts.
+Pipeline:
+    1. Build datasets from data/processed/{train,val,test}/<class>/*.jpg
+    2. Fine-tune MobileNetV3-Small (ImageNet pretrained) for N epochs
+    3. Run temperature scaling on the val set (post-hoc calibration)
+    4. Save best checkpoint + temperature to models/checkpoints/
 
-Example:
+Device selection is automatic:
+    - CUDA (Colab T4 / L4)  -> use it
+    - MPS  (Mac M-series)   -> use it
+    - else                  -> CPU (slow but works)
+
+Run:
     python scripts/train_dl.py --epochs 10 --batch-size 64 --lr 3e-4
 """
 
@@ -22,7 +32,9 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, models, transforms
 
 
+# ============================================================
 # Config
+# ============================================================
 
 @dataclass
 class TrainConfig:
@@ -36,11 +48,13 @@ class TrainConfig:
     weight_decay: float = 1e-4
     num_workers: int = 4
     seed: int = 42
-    unfreeze_last_n_blocks: int = 3      # freeze earlier blocks
+    unfreeze_last_n_blocks: int = 3      # rest is frozen for speed
     early_stop_patience: int = 3
 
 
-# Device
+# ============================================================
+# Device selection
+# ============================================================
 
 def pick_device() -> torch.device:
     """CUDA -> MPS -> CPU, in that order."""
@@ -51,11 +65,13 @@ def pick_device() -> torch.device:
     return torch.device("cpu")
 
 
+# ============================================================
 # Data loading
+# ============================================================
 
 def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Compose]:
     """Train uses augmentation, val/test use deterministic preprocessing."""
-    # ImageNet normalization.
+    # ImageNet statistics (MobileNetV3 pretrained on ImageNet)
     mean = [0.485, 0.456, 0.406]
     std = [0.229, 0.224, 0.225]
 
@@ -67,7 +83,7 @@ def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Co
         transforms.RandomRotation(degrees=15),
         transforms.ToTensor(),
         transforms.Normalize(mean=mean, std=std),
-        transforms.RandomErasing(p=0.25, scale=(0.02, 0.15)),
+        transforms.RandomErasing(p=0.25, scale=(0.02, 0.15)),  # cutout-like
     ])
 
     eval_tf = transforms.Compose([
@@ -79,16 +95,36 @@ def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Co
     return train_tf, eval_tf
 
 
+def _is_real_image_file(path: str) -> bool:
+    """Filter for ImageFolder: keeps real images, rejects junk.
+
+    Drops macOS AppleDouble sidecar files (`._*` — created automatically when
+    tarring on macOS) and other dotfiles like `.DS_Store`. These contain no
+    pixels and crash PIL with `UnidentifiedImageError`.
+    """
+    import os
+    name = os.path.basename(path)
+    if name.startswith("."):
+        return False  # covers ._*, .DS_Store, ._.DS_Store, etc.
+    return path.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".webp"))
+
+
 def build_dataloaders(cfg: TrainConfig) -> tuple[DataLoader, DataLoader, DataLoader, list[str]]:
     """Returns train/val/test DataLoaders plus the class name list."""
     train_tf, eval_tf = build_transforms(cfg.image_size)
     root = Path(cfg.data_dir)
 
-    train_ds = datasets.ImageFolder(root / "train", transform=train_tf)
-    val_ds = datasets.ImageFolder(root / "val", transform=eval_tf)
-    test_ds = datasets.ImageFolder(root / "test", transform=eval_tf)
+    train_ds = datasets.ImageFolder(
+        root / "train", transform=train_tf, is_valid_file=_is_real_image_file,
+    )
+    val_ds = datasets.ImageFolder(
+        root / "val", transform=eval_tf, is_valid_file=_is_real_image_file,
+    )
+    test_ds = datasets.ImageFolder(
+        root / "test", transform=eval_tf, is_valid_file=_is_real_image_file,
+    )
 
-    # Class order must match across splits.
+    # Sanity: same class order across splits
     assert train_ds.classes == val_ds.classes == test_ds.classes, \
         "Class folders differ across splits — check data/processed/"
 
@@ -100,18 +136,24 @@ def build_dataloaders(cfg: TrainConfig) -> tuple[DataLoader, DataLoader, DataLoa
     return train_loader, val_loader, test_loader, train_ds.classes
 
 
+# ============================================================
 # Model
+# ============================================================
 
 def build_model(num_classes: int, unfreeze_last_n_blocks: int) -> nn.Module:
-    """MobileNetV3-Small with a replaced classification head."""
+    """MobileNetV3-Small with a new classification head.
+
+    Freezing strategy: only the last N feature blocks plus the classifier
+    head are trainable. Faster training, less overfitting on small data.
+    """
     weights = models.MobileNet_V3_Small_Weights.DEFAULT
     net = models.mobilenet_v3_small(weights=weights)
 
-    # Replace classification head.
+    # Replace head for our num_classes
     in_features = net.classifier[-1].in_features
     net.classifier[-1] = nn.Linear(in_features, num_classes)
 
-    # Freeze earlier feature blocks.
+    # Freeze early features
     feature_blocks = list(net.features)
     n_total = len(feature_blocks)
     n_freeze = max(0, n_total - unfreeze_last_n_blocks)
@@ -119,14 +161,16 @@ def build_model(num_classes: int, unfreeze_last_n_blocks: int) -> nn.Module:
         requires_grad = i >= n_freeze
         for p in block.parameters():
             p.requires_grad = requires_grad
-    # Keep classifier trainable.
+    # Classifier is always trainable
     for p in net.classifier.parameters():
         p.requires_grad = True
 
     return net
 
 
-# Train/eval loops
+# ============================================================
+# Training & evaluation loops
+# ============================================================
 
 def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> tuple[float, float]:
     """Return (loss, top-1 accuracy)."""
@@ -165,7 +209,9 @@ def train_one_epoch(
     return loss_sum / total
 
 
-# Temperature scaling
+# ============================================================
+# Temperature scaling (post-hoc calibration)
+# ============================================================
 
 def fit_temperature(
     model: nn.Module,
@@ -173,9 +219,14 @@ def fit_temperature(
     device: torch.device,
     max_iter: int = 100,
 ) -> float:
-    """Fit scalar temperature T on validation logits with L-BFGS."""
+    """Fit a single scalar temperature T on the validation set.
+
+    Following Guo et al. 2017 — solves
+        T* = argmin_T  NLL(softmax(logits / T), y)
+    via L-BFGS. Improves selective-prediction reliability for free.
+    """
     model.eval()
-    # Collect validation logits and labels.
+    # Collect all val logits & labels (val set is small, fits in RAM)
     all_logits, all_y = [], []
     with torch.no_grad():
         for x, y in val_loader:
@@ -185,7 +236,7 @@ def fit_temperature(
     logits = torch.cat(all_logits, dim=0)
     targets = torch.cat(all_y, dim=0)
 
-    # Single trainable scalar.
+    # Single trainable scalar, kept on the same device as logits
     temperature = nn.Parameter(torch.ones(1, device=device))
     optimizer = torch.optim.LBFGS([temperature], lr=0.01, max_iter=max_iter)
 
@@ -199,7 +250,9 @@ def fit_temperature(
     return float(temperature.detach().cpu().item())
 
 
+# ============================================================
 # Main
+# ============================================================
 
 def parse_args() -> TrainConfig:
     p = argparse.ArgumentParser()
@@ -228,17 +281,17 @@ def main() -> None:
 
     Path(cfg.checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
-    # Data.
+    # Data
     train_loader, val_loader, test_loader, class_names = build_dataloaders(cfg)
     print(f"[train] classes = {class_names}")
 
-    # Model.
+    # Model
     model = build_model(cfg.num_classes, cfg.unfreeze_last_n_blocks).to(device)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
     print(f"[train] params: {trainable:,} trainable / {total:,} total")
 
-    # Optimizer and scheduler.
+    # Optimizer & scheduler
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad],
         lr=cfg.lr,
@@ -248,7 +301,7 @@ def main() -> None:
         optimizer, T_max=cfg.epochs,
     )
 
-    # Training with early stopping.
+    # Training loop with early stopping
     best_val_acc, patience = 0.0, 0
     history = []
 
@@ -272,7 +325,7 @@ def main() -> None:
               f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}  "
               f"({elapsed:.1f}s)")
 
-        # Early stopping on val accuracy.
+        # Early stopping on val accuracy
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             patience = 0
@@ -285,22 +338,23 @@ def main() -> None:
                 print(f"  ↳ early stop at epoch {epoch}")
                 break
 
-    # Reload best checkpoint.
+    # Reload best checkpoint
     model.load_state_dict(
         torch.load(Path(cfg.checkpoint_dir) / "mobilenet_best.pth",
                    map_location=device)
     )
 
-    # Fit temperature.
+    # Calibration
     print("[train] fitting temperature on val set...")
     T = fit_temperature(model, val_loader, device)
     print(f"[train] temperature T = {T:.4f}")
 
-    # Evaluate test set (argmax is unchanged by calibration).
+    # Final test eval (uncalibrated logits — calibration affects probabilities,
+    # not argmax accuracy)
     test_loss, test_acc = evaluate(model, test_loader, device)
     print(f"[train] test_acc = {test_acc:.4f}")
 
-    # Save artifacts.
+    # Save artefacts
     artefacts = {
         "config": asdict(cfg),
         "class_names": class_names,
