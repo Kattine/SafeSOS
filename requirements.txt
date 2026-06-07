@@ -15,7 +15,7 @@ torchvision>=0.15
 mediapipe>=0.10
 
 # App / deployment
-gradio>=4.0
+gradio>=5.9.0
 
 # Dataset access
 huggingface_hub>=0.20

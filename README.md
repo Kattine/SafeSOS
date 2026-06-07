@@ -4,11 +4,12 @@ emoji: 🆘
 colorFrom: red
 colorTo: gray
 sdk: gradio
-sdk_version: 4.44.0
+sdk_version: 5.9.0
+python_version: "3.12"
 app_file: main.py
 pinned: true
 license: mit
-short_description: Selective static gesture recognition for silent emergency communication
+short_description: Silent emergency gesture recognition (DL + selective)
 ---
 
 # 🆘 SafeSOS — Silent Emergency Communication
