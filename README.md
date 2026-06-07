@@ -4,12 +4,12 @@ emoji: 🆘
 colorFrom: red
 colorTo: gray
 sdk: gradio
-sdk_version: 5.9.0
+sdk_version: 5.49.0
 python_version: "3.12"
 app_file: main.py
 pinned: true
 license: mit
-short_description: Silent emergency gesture recognition (DL + selective)
+short_description: Silent emergency gesture recognition
 ---
 
 # 🆘 SafeSOS — Silent Emergency Communication
@@ -17,8 +17,7 @@ short_description: Silent emergency gesture recognition (DL + selective)
 **SafeSOS** recognises a small vocabulary of static hand gestures and
 translates them into spoken emergency messages, for use in high-stakes
 silent-communication scenarios such as non-verbal ICU patients,
-hearing-impaired users in distress, and similar safety-critical
-settings.
+hearing-impaired users in distress, and similar safety-critical settings.
 
 ## How it works
 
