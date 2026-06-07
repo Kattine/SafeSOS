@@ -1,19 +1,6 @@
-"""
-Train MobileNetV3-Small on the 9+1-class SafeSOS gesture problem.
+"""Train MobileNetV3-Small for SafeSOS gestures.
 
-Pipeline:
-    1. Build datasets from data/processed/{train,val,test}/<class>/*.jpg
-    2. Fine-tune MobileNetV3-Small (ImageNet pretrained) for N epochs
-    3. Run temperature scaling on the val set (post-hoc calibration)
-    4. Save best checkpoint + temperature to models/checkpoints/
-
-Device selection is automatic:
-    - CUDA (Colab T4 / L4)  -> use it
-    - MPS  (Mac M-series)   -> use it
-    - else                  -> CPU (slow but works)
-
-Run:
-    python scripts/train_dl.py --epochs 10 --batch-size 64 --lr 3e-4
+Runs training, validation-based checkpointing, and temperature calibration.
 """
 
 from __future__ import annotations
@@ -32,9 +19,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, models, transforms
 
 
-# ============================================================
 # Config
-# ============================================================
 
 @dataclass
 class TrainConfig:
@@ -48,13 +33,11 @@ class TrainConfig:
     weight_decay: float = 1e-4
     num_workers: int = 4
     seed: int = 42
-    unfreeze_last_n_blocks: int = 3      # rest is frozen for speed
+    unfreeze_last_n_blocks: int = 3      # keep earlier blocks frozen
     early_stop_patience: int = 3
 
 
-# ============================================================
 # Device selection
-# ============================================================
 
 def pick_device() -> torch.device:
     """CUDA -> MPS -> CPU, in that order."""
@@ -65,13 +48,11 @@ def pick_device() -> torch.device:
     return torch.device("cpu")
 
 
-# ============================================================
 # Data loading
-# ============================================================
 
 def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Compose]:
     """Train uses augmentation, val/test use deterministic preprocessing."""
-    # ImageNet statistics (MobileNetV3 pretrained on ImageNet)
+    # ImageNet normalization values.
     mean = [0.485, 0.456, 0.406]
     std = [0.229, 0.224, 0.225]
 
@@ -83,7 +64,7 @@ def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Co
         transforms.RandomRotation(degrees=15),
         transforms.ToTensor(),
         transforms.Normalize(mean=mean, std=std),
-        transforms.RandomErasing(p=0.25, scale=(0.02, 0.15)),  # cutout-like
+        transforms.RandomErasing(p=0.25, scale=(0.02, 0.15)),
     ])
 
     eval_tf = transforms.Compose([
@@ -96,16 +77,11 @@ def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Co
 
 
 def _is_real_image_file(path: str) -> bool:
-    """Filter for ImageFolder: keeps real images, rejects junk.
-
-    Drops macOS AppleDouble sidecar files (`._*` — created automatically when
-    tarring on macOS) and other dotfiles like `.DS_Store`. These contain no
-    pixels and crash PIL with `UnidentifiedImageError`.
-    """
+    """Keep only actual image files for ImageFolder."""
     import os
     name = os.path.basename(path)
     if name.startswith("."):
-        return False  # covers ._*, .DS_Store, ._.DS_Store, etc.
+        return False
     return path.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".webp"))
 
 
@@ -124,7 +100,7 @@ def build_dataloaders(cfg: TrainConfig) -> tuple[DataLoader, DataLoader, DataLoa
         root / "test", transform=eval_tf, is_valid_file=_is_real_image_file,
     )
 
-    # Sanity: same class order across splits
+    # Class order must match across splits.
     assert train_ds.classes == val_ds.classes == test_ds.classes, \
         "Class folders differ across splits — check data/processed/"
 
@@ -136,24 +112,18 @@ def build_dataloaders(cfg: TrainConfig) -> tuple[DataLoader, DataLoader, DataLoa
     return train_loader, val_loader, test_loader, train_ds.classes
 
 
-# ============================================================
 # Model
-# ============================================================
 
 def build_model(num_classes: int, unfreeze_last_n_blocks: int) -> nn.Module:
-    """MobileNetV3-Small with a new classification head.
-
-    Freezing strategy: only the last N feature blocks plus the classifier
-    head are trainable. Faster training, less overfitting on small data.
-    """
+    """MobileNetV3-Small with a replaced classifier head."""
     weights = models.MobileNet_V3_Small_Weights.DEFAULT
     net = models.mobilenet_v3_small(weights=weights)
 
-    # Replace head for our num_classes
+    # Replace classification head.
     in_features = net.classifier[-1].in_features
     net.classifier[-1] = nn.Linear(in_features, num_classes)
 
-    # Freeze early features
+    # Freeze early feature blocks.
     feature_blocks = list(net.features)
     n_total = len(feature_blocks)
     n_freeze = max(0, n_total - unfreeze_last_n_blocks)
@@ -161,16 +131,14 @@ def build_model(num_classes: int, unfreeze_last_n_blocks: int) -> nn.Module:
         requires_grad = i >= n_freeze
         for p in block.parameters():
             p.requires_grad = requires_grad
-    # Classifier is always trainable
+    # Keep classifier trainable.
     for p in net.classifier.parameters():
         p.requires_grad = True
 
     return net
 
 
-# ============================================================
-# Training & evaluation loops
-# ============================================================
+# Training and evaluation loops
 
 def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> tuple[float, float]:
     """Return (loss, top-1 accuracy)."""
@@ -209,9 +177,7 @@ def train_one_epoch(
     return loss_sum / total
 
 
-# ============================================================
-# Temperature scaling (post-hoc calibration)
-# ============================================================
+# Temperature scaling
 
 def fit_temperature(
     model: nn.Module,
@@ -219,14 +185,9 @@ def fit_temperature(
     device: torch.device,
     max_iter: int = 100,
 ) -> float:
-    """Fit a single scalar temperature T on the validation set.
-
-    Following Guo et al. 2017 — solves
-        T* = argmin_T  NLL(softmax(logits / T), y)
-    via L-BFGS. Improves selective-prediction reliability for free.
-    """
+    """Fit scalar temperature T on validation logits with L-BFGS."""
     model.eval()
-    # Collect all val logits & labels (val set is small, fits in RAM)
+    # Collect validation logits and labels.
     all_logits, all_y = [], []
     with torch.no_grad():
         for x, y in val_loader:
@@ -236,7 +197,7 @@ def fit_temperature(
     logits = torch.cat(all_logits, dim=0)
     targets = torch.cat(all_y, dim=0)
 
-    # Single trainable scalar, kept on the same device as logits
+    # Single trainable scalar.
     temperature = nn.Parameter(torch.ones(1, device=device))
     optimizer = torch.optim.LBFGS([temperature], lr=0.01, max_iter=max_iter)
 
@@ -250,9 +211,7 @@ def fit_temperature(
     return float(temperature.detach().cpu().item())
 
 
-# ============================================================
 # Main
-# ============================================================
 
 def parse_args() -> TrainConfig:
     p = argparse.ArgumentParser()
@@ -291,7 +250,7 @@ def main() -> None:
     total = sum(p.numel() for p in model.parameters())
     print(f"[train] params: {trainable:,} trainable / {total:,} total")
 
-    # Optimizer & scheduler
+    # Optimizer and scheduler
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad],
         lr=cfg.lr,
@@ -349,13 +308,12 @@ def main() -> None:
     T = fit_temperature(model, val_loader, device)
     print(f"[train] temperature T = {T:.4f}")
 
-    # Final test eval (uncalibrated logits — calibration affects probabilities,
-    # not argmax accuracy)
+    # Final test eval (argmax is unchanged by calibration).
     test_loss, test_acc = evaluate(model, test_loader, device)
     print(f"[train] test_acc = {test_acc:.4f}")
 
-    # Save artefacts
-    artefacts = {
+    # Save artifacts
+    artifacts = {
         "config": asdict(cfg),
         "class_names": class_names,
         "temperature": T,
@@ -364,7 +322,7 @@ def main() -> None:
         "history": history,
     }
     with open(Path(cfg.checkpoint_dir) / "mobilenet_meta.json", "w") as f:
-        json.dump(artefacts, f, indent=2)
+        json.dump(artifacts, f, indent=2)
 
     print(f"[done] artefacts saved to {cfg.checkpoint_dir}/")
 

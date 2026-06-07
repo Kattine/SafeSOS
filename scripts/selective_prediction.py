@@ -1,26 +1,6 @@
-"""
-Selective prediction analysis: characterise risk-coverage trade-offs.
+"""Selective prediction analysis for risk-coverage trade-offs.
 
-This is the central experiment in the SafeSOS paper.
-
-Definitions:
-    Let f(x) be the model's confidence on x (max calibrated softmax / proba).
-    Given threshold tau, the selective classifier accepts x iff f(x) >= tau.
-        coverage(tau) = P(f(X) >= tau)
-        selective_risk(tau) = P(g(X) != Y | f(X) >= tau)
-        selective_acc(tau) = 1 - selective_risk(tau)
-
-Reads:
-    data/outputs/predictions_<model>.npz   (from evaluate.py)
-
-Writes:
-    reports/figures/risk_coverage.png
-    reports/figures/coverage_vs_tau.png
-    reports/figures/per_class_abstention.png
-    data/outputs/selective_metrics.json
-
-Run:
-    python scripts/selective_prediction.py
+Reads predictions from evaluate.py outputs and writes figures + JSON metrics.
 """
 
 from __future__ import annotations
@@ -30,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-# project root importable
+# Allow running from project root or module mode.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -38,9 +18,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 import numpy as np
 
 
-# ============================================================
-# Core selective-prediction metrics
-# ============================================================
+# Core metrics
 
 def confidence_from_probs(probs: np.ndarray) -> np.ndarray:
     """Confidence = max calibrated softmax / proba per sample."""
@@ -67,7 +45,7 @@ def risk_coverage_curve(
         n_acc = int(accepted.sum())
         coverages[i] = n_acc / n
         if n_acc == 0:
-            selective_risks[i] = 0.0   # vacuously zero
+            selective_risks[i] = 0.0
             selective_accs[i] = 1.0
         else:
             selective_accs[i] = float(correct[accepted].mean())
@@ -82,16 +60,12 @@ def risk_coverage_curve(
 
 
 def aurc(coverages: np.ndarray, selective_risks: np.ndarray) -> float:
-    """Area under the risk-coverage curve (lower is better).
-
-    Standard scalar summary of selective-classifier quality; smaller AURC
-    means the classifier's confidence ranks correctness well.
-    """
-    # Sort by coverage ascending so the integral is well-defined
+    """Area under risk-coverage curve (lower is better)."""
+    # Sort by coverage so integration is stable.
     order = np.argsort(coverages)
     c = coverages[order]
     r = selective_risks[order]
-    # trapezoidal rule; np.trapz was renamed to np.trapezoid in NumPy 2.x
+    # NumPy 2.x renamed trapz -> trapezoid.
     trap = getattr(np, "trapezoid", None) or np.trapz
     return float(trap(r, c))
 
@@ -130,9 +104,7 @@ def per_class_abstention(
     }
 
 
-# ============================================================
 # I/O
-# ============================================================
 
 def load_predictions(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
     """Load (probs, y_true) from a predictions_*.npz file.
@@ -149,22 +121,14 @@ def load_predictions(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
     return probs, y_true
 
 
-# ============================================================
 # Plotting
-# ============================================================
 
 def plot_risk_coverage(
     curves: dict[str, dict[str, np.ndarray]],
     out_path: Path,
     operating_tau: float = 0.75,
 ) -> None:
-    """Overlay all models' risk-coverage curves with paper-grade annotations.
-
-    Adds:
-        - vertical line at the operating point (coverage corresponding to tau)
-        - horizontal reference line at raw error rate (full coverage)
-        - crossover annotation between top two models
-    """
+    """Plot risk-coverage curves for all models."""
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(8, 5.5))
@@ -194,13 +158,13 @@ def plot_risk_coverage(
         # raw risk = at full coverage (tau=0)
         raw_risks[name] = float(curve["selective_risk"][0])
 
-    # Reference line: raw error rate of the best raw-accuracy model (SVM)
+    # Reference line: SVM raw error at full coverage.
     if "svm" in raw_risks:
         ax.axhline(raw_risks["svm"], linestyle=":", color="#666",
                    linewidth=1, alpha=0.7,
                    label=f"SVM raw error ({raw_risks['svm']:.3f})")
 
-    # Annotation for the operating point — placed bottom-right to avoid legend
+    # Operating-point note.
     ax.text(
         0.98, 0.02,
         f"○  operating point  τ = {operating_tau}",
@@ -230,7 +194,7 @@ def plot_coverage_vs_threshold(
     curves: dict[str, dict[str, np.ndarray]],
     out_path: Path,
 ) -> None:
-    """For deployment guidance: how to pick tau for a target coverage."""
+    """Plot coverage and selective accuracy versus threshold."""
     import matplotlib.pyplot as plt
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
     for name, curve in curves.items():
@@ -281,9 +245,7 @@ def plot_per_class_abstention(
     print(f"[plot] saved {out_path}")
 
 
-# ============================================================
 # Entry point
-# ============================================================
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
@@ -307,13 +269,13 @@ def main() -> None:
     figures_dir = Path(args.figures_dir)
     kp_dir = Path(args.keypoint_dir)
 
-    # Class names from the keypoint metadata
+    # Class names from keypoint metadata.
     test_npz = np.load(kp_dir / "test.npz", allow_pickle=True)
     class_names = list(test_npz["class_names"])
     K = len(class_names)
     print(f"[init] classes ({K}): {class_names}")
 
-    # Models to analyse — skip naive (no informative probs)
+    # Models with probability outputs.
     candidate_models = ["svm", "rf", "mobilenet"]
     thresholds = np.linspace(0.0, 1.0, args.n_thresholds)
 
@@ -341,7 +303,7 @@ def main() -> None:
         print("[error] no models had probability outputs to analyse.")
         sys.exit(1)
 
-    # ---- Print headline summary ----
+    # Print summary.
     print("\n" + "=" * 60)
     print(f"  {'model':<12s} {'AURC':>10s}  (lower = better calibration)")
     print("  " + "-" * 30)
@@ -358,7 +320,7 @@ def main() -> None:
         print(f"  {name:<12s} {c['coverage'][idx]:>10.4f} {c['selective_accuracy'][idx]:>10.4f}")
     print("=" * 60)
 
-    # ---- Save artefacts ----
+    # Save figures and metrics.
     plot_risk_coverage(
         curves, figures_dir / "risk_coverage.png",
         operating_tau=args.operating_tau,
