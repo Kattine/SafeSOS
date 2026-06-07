@@ -1,11 +1,7 @@
-"""
-Inference pipeline for SafeSOS.
+"""Inference module used by the Gradio app.
 
-Wraps the deployed MobileNetV3 model with selective prediction logic and
-maps predictions to spoken emergency messages.
-
-The predictor is the single source of truth for "what the user is shown".
-The Gradio interface delegates all decision logic here.
+Loads the deployed MobileNetV3 checkpoint, applies selective prediction,
+and maps gesture classes to spoken messages.
 """
 
 from __future__ import annotations
@@ -19,15 +15,13 @@ from typing import Optional
 import numpy as np
 from PIL import Image
 
-# Make project root importable so `from models.deep_learning import ...` works
+# Allow running this module from different entry points.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 
-# ============================================================
 # Output structure
-# ============================================================
 
 @dataclass
 class PredictionResult:
@@ -39,21 +33,12 @@ class PredictionResult:
     detail: str = ""        # human-readable explanation (e.g. error reason)
 
 
-# ============================================================
 # Predictor
-# ============================================================
 
 class GesturePredictor:
-    """Loads the trained MobileNetV3 with temperature scaling.
+    """Loads trained MobileNetV3 and returns selective predictions."""
 
-    Thread-safety:
-        Not thread-safe. Gradio's default streaming setup is single-threaded
-        per session, so this is fine in practice.
-    """
-
-    # Maps trained class name -> spoken emergency message.
-    # Keep these short and unambiguous: TTS engines and stressed users
-    # both prefer terse phrases.
+    # Map class names to short spoken messages.
     GESTURE_TO_MESSAGE: dict[str, str] = {
         "call":       "I need to make a call. Please help.",
         "stop":       "STOP. Do not approach.",
@@ -80,7 +65,7 @@ class GesturePredictor:
         self.meta_path = Path(meta_path)
         self.confidence_threshold = confidence_threshold
 
-        # Load metadata (class names and temperature for calibrated softmax)
+        # Load class names and temperature used at training time.
         if not self.meta_path.is_file():
             raise FileNotFoundError(
                 f"Model metadata not found at {self.meta_path}. "
@@ -92,14 +77,13 @@ class GesturePredictor:
         self.temperature: float = float(meta["temperature"])
         self.num_classes: int = len(self.class_names)
 
-        # Lazy-load torch/model so that just importing this module doesn't
-        # pull in torch on the worker that's only serving static pages.
+        # Lazy load model dependencies.
         self._sm = None
         self._tf = None
         self._torch = None
         self._F = None
 
-    # ---- Lazy init ---------------------------------------------------
+    # Lazy init
 
     def _ensure_loaded(self) -> None:
         if self._sm is not None:
@@ -115,7 +99,7 @@ class GesturePredictor:
                 "Did you train the model and copy the .pth here?"
             )
 
-        # Auto-select device: CUDA > MPS > CPU
+        # Device priority: CUDA > MPS > CPU.
         device = "cuda" if torch.cuda.is_available() else (
             "mps" if torch.backends.mps.is_available() else "cpu"
         )
@@ -136,7 +120,7 @@ class GesturePredictor:
                                  [0.229, 0.224, 0.225]),
         ])
 
-        # Stash references
+        # Keep references on the instance.
         self._sm = sm
         self._tf = tf
         self._torch = torch
@@ -145,7 +129,7 @@ class GesturePredictor:
         print(f"[predictor] loaded MobileNetV3 on {device}; "
               f"T={self.temperature:.3f}, threshold={self.confidence_threshold}")
 
-    # ---- Public API --------------------------------------------------
+    # Public API
 
     def predict(self, image: Image.Image | np.ndarray | None) -> PredictionResult:
         """Single-frame prediction with selective abstention.
@@ -163,7 +147,7 @@ class GesturePredictor:
                 confidence=0.0,
             )
 
-        # Normalise input
+        # Normalize input image.
         try:
             if isinstance(image, np.ndarray):
                 pil = Image.fromarray(image).convert("RGB")
@@ -194,7 +178,7 @@ class GesturePredictor:
                 detail=str(e),
             )
 
-        # Run inference
+        # Forward pass.
         torch = self._torch
         F = self._F
         x = self._tf(pil).unsqueeze(0).to(self._device)
@@ -206,7 +190,7 @@ class GesturePredictor:
         confidence = float(probs[idx])
         class_name = self.class_names[idx]
 
-        # Selective decision: abstain on low confidence
+        # Abstain if confidence is below threshold.
         if confidence < self.confidence_threshold:
             return PredictionResult(
                 message="I'm not sure. Please try again.",
@@ -215,7 +199,7 @@ class GesturePredictor:
                 detail=f"Top guess: {class_name} ({confidence:.0%})",
             )
 
-        # Special case: high-confidence no_gesture means "no signal"
+        # If no gesture is detected, keep system idle.
         if class_name == "no_gesture":
             return PredictionResult(
                 message="No gesture detected.",
@@ -224,7 +208,7 @@ class GesturePredictor:
                 class_name=class_name,
             )
 
-        # Confident, meaningful prediction
+        # Return spoken message for accepted gesture.
         message = self.GESTURE_TO_MESSAGE.get(class_name, class_name)
         return PredictionResult(
             message=message,
@@ -244,7 +228,7 @@ class GesturePredictor:
         if image is None or result.status == "ERROR":
             return result, {}
 
-        # Re-run to get probabilities (cheap; already cached model)
+        # Re-run to return full probabilities for UI diagnostics.
         torch = self._torch
         F = self._F
         if isinstance(image, np.ndarray):
