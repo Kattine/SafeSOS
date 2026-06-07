@@ -24,9 +24,11 @@ models/checkpoints/*.pkl
 models/checkpoints/*.joblib
 models/checkpoints/*.task
 
-# saving small SVM and best (app will load these) --- IGNORE ---
+# saving best (app will load these) --- IGNORE ---
 !models/checkpoints/keypoint_svm.joblib
 !models/checkpoints/keypoint_best.joblib
+!models/checkpoints/mobilenet_best.pth
+!models/checkpoints/mobilenet_meta.json
 
 !models/checkpoints/.gitkeep
 
