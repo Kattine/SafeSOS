@@ -1,4 +1,4 @@
-"""Train classical baselines (SVM, RF) on MediaPipe keypoints.
+"""Train classical models (SVM, RF) on MediaPipe keypoints.
 
 Reads: data/processed/keypoints/{train,val,test}.npz
 Writes: models/checkpoints/keypoint_{svm,rf,best}.joblib and classical_metrics.json
@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-# Allow running as script or module.
+# Allow imports when run as a script.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -61,7 +61,7 @@ def train_backend(
     checkpoint_dir: Path,
 ) -> dict:
     """Fit one backend (svm | rf), evaluate, save."""
-    # Lazy import keeps startup light.
+    # Import here so the script can still import without optional deps loaded.
     from models.classical_ml import KeypointClassifier
 
     print(f"\n[train] backend = {backend}")

@@ -1,35 +1,7 @@
-"""
-Robustness experiment: evaluate all three SafeSOS models under realistic
-input perturbations.
+"""Run robustness tests under image perturbations.
 
-For each perturbation type and severity, we apply the perturbation to every
-test image, re-run all three models, and record:
-  - accuracy
-  - macro-F1
-  - abstention rate (for models that produce calibrated probabilities)
-  - selective accuracy at tau = 0.75
-  - MediaPipe detection rate (for the classical pipeline)
-
-The central narrative this experiment supports is that MobileNetV3 degrades
-gracefully under distribution shift while the keypoint-based pipeline collapses
-when MediaPipe stops detecting hands. This is the inverse of the clean-data
-finding (where SVM dominated) and is the third leg of the SafeSOS paper.
-
-Reads:
-    models/checkpoints/*           (all three trained models)
-    data/processed/test/<class>/*.jpg
-
-Writes:
-    data/outputs/robustness_metrics.json
-    reports/figures/robustness_<perturbation>.png   (one per perturbation type)
-    reports/figures/robustness_summary.png          (4-panel summary)
-
-This script is slower than evaluate.py because it re-runs MediaPipe on
-perturbed images. Budget ~10-20 minutes on a Mac M-series CPU.
-
-Run:
-    python scripts/robustness_experiment.py
-    python scripts/robustness_experiment.py --max-test-samples 1000  # quicker debug run
+For each perturbation and severity level, this script re-evaluates all models
+on the test split and saves metrics plus summary figures.
 """
 
 from __future__ import annotations
@@ -41,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-# Make project root importable
+# Allow running as script or module.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -52,23 +24,17 @@ from sklearn.metrics import accuracy_score, f1_score
 from tqdm.auto import tqdm
 
 
-# ============================================================
-# Perturbation primitives
-# ============================================================
+# Perturbation functions
 
 def perturb_blur(img: Image.Image, sigma: float) -> Image.Image:
-    """Gaussian blur — simulates lens defocus or motion blur."""
+    """Gaussian blur."""
     if sigma <= 0:
         return img
     return img.filter(ImageFilter.GaussianBlur(radius=sigma))
 
 
 def perturb_low_light(img: Image.Image, gamma: float) -> Image.Image:
-    """Brightness reduction — simulates low-light camera capture.
-
-    gamma=1.0 leaves image unchanged; smaller gamma -> darker.
-    We multiply pixel values by gamma in linear RGB.
-    """
+    """Brightness reduction with multiplicative gamma."""
     if gamma >= 1.0:
         return img
     arr = np.asarray(img).astype(np.float32) * gamma
@@ -76,14 +42,14 @@ def perturb_low_light(img: Image.Image, gamma: float) -> Image.Image:
 
 
 def perturb_rotation(img: Image.Image, angle_deg: float) -> Image.Image:
-    """In-plane rotation — simulates off-axis camera."""
+    """In-plane rotation."""
     if angle_deg == 0:
         return img
     return img.rotate(angle_deg, resample=Image.BILINEAR, fillcolor=(0, 0, 0))
 
 
 def perturb_occlusion(img: Image.Image, mask_ratio: float, seed: int = 0) -> Image.Image:
-    """Random rectangular black mask — simulates partial hand occlusion."""
+    """Random rectangular black mask."""
     if mask_ratio <= 0:
         return img
     rng = np.random.default_rng(seed)
@@ -93,14 +59,14 @@ def perturb_occlusion(img: Image.Image, mask_ratio: float, seed: int = 0) -> Ima
     mw = int(w * mask_ratio)
     if mh < 1 or mw < 1:
         return img
-    # Random top-left, ensure mask stays inside the image
+    # Random top-left corner within valid range.
     y0 = int(rng.integers(0, max(1, h - mh)))
     x0 = int(rng.integers(0, max(1, w - mw)))
     arr[y0:y0 + mh, x0:x0 + mw] = 0
     return Image.fromarray(arr)
 
 
-# Perturbation registry: name -> (function, list of severity values, severity label)
+# name -> (function, severity values, axis label)
 PERTURBATIONS: dict[str, tuple[Callable, list[float], str]] = {
     "blur":      (perturb_blur,      [0.0, 1.0, 2.0, 4.0, 8.0],      "σ (Gaussian radius)"),
     "low_light": (perturb_low_light, [1.0, 0.7, 0.5, 0.3, 0.15],     "γ (brightness)"),
@@ -109,9 +75,7 @@ PERTURBATIONS: dict[str, tuple[Callable, list[float], str]] = {
 }
 
 
-# ============================================================
 # Test-set inventory
-# ============================================================
 
 @dataclass
 class TestImage:
@@ -133,19 +97,10 @@ def collect_test_images(test_dir: Path) -> tuple[list[TestImage], list[str]]:
     return items, class_names
 
 
-# ============================================================
-# Predictor wrappers (one per model family)
-# ============================================================
+# Predictor wrappers
 
 class ClassicalGroup:
-    """Multiple keypoint-based classifiers sharing ONE MediaPipe pass.
-
-    Major optimisation: running MediaPipe is by far the slowest stage
-    (~30 ms / image vs <1 ms for SVM/RF classification on 63-d vectors).
-    Previously SVM and RF were separate ClassicalPredictor instances and
-    each cell re-ran MediaPipe twice. This class extracts keypoints once
-    and runs every wrapped classifier on the shared feature matrix.
-    """
+    """Run SVM and RF with one shared MediaPipe pass."""
 
     def __init__(self, classifier_ckpts: dict[str, Path]) -> None:
         from models.classical_ml import HandKeypointExtractor, KeypointClassifier
@@ -165,7 +120,7 @@ class ClassicalGroup:
         feature_indices: list[int] = []
         detected = np.zeros(n, dtype=bool)
 
-        # Stage 1: MediaPipe once
+        # Stage 1: MediaPipe extraction.
         for i, img in enumerate(images):
             arr = np.asarray(img.convert("RGB"))
             vec = self.extractor.extract(arr)
@@ -175,7 +130,7 @@ class ClassicalGroup:
             feature_buffer.append(vec)
             feature_indices.append(i)
 
-        # Stage 2: each classifier on the same feature matrix
+        # Stage 2: run each classifier on shared features.
         results: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
         if feature_buffer:
             X = np.stack(feature_buffer, axis=0)
@@ -190,7 +145,7 @@ class ClassicalGroup:
                     max_conf[idx] = float(maxes[k])
                 results[name] = (y_pred, max_conf, detected.copy())
         else:
-            # No detections at all: produce empty results for every classifier
+            # No detections: return empty predictions for each classifier.
             for name in self.classifiers:
                 results[name] = (
                     np.full(n, -1, dtype=np.int64),
@@ -204,32 +159,23 @@ class ClassicalGroup:
 
 
 class ClassicalPredictor:
-    """MediaPipe -> SVM (or RF) inference on perturbed images."""
+    """MediaPipe -> classical model inference on perturbed images."""
 
     def __init__(self, ckpt_path: Path) -> None:
         from models.classical_ml import HandKeypointExtractor, KeypointClassifier
         self.extractor = HandKeypointExtractor()
         self.classifier = KeypointClassifier.load(ckpt_path)
-        # Force-initialise to surface any errors early
+        # Force init so setup issues fail early.
         self.extractor._ensure_initialised()
 
     def predict_batch(self, images: list[Image.Image]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Returns (y_pred, max_conf, detected_mask).
-
-        detected_mask[i] = True iff MediaPipe successfully extracted keypoints.
-        Samples with no detection are assigned y_pred=-1, max_conf=0.
-
-        Performance note: keypoint extraction is the slow stage and is
-        inherently per-image (MediaPipe has no batch API). We extract all
-        keypoints first, then call predict_proba once on the stacked matrix,
-        which makes the classifier stage ~30x faster than per-image calls.
-        """
+        """Return (y_pred, max_conf, detected_mask)."""
         n = len(images)
         y_pred = np.full(n, -1, dtype=np.int64)
         max_conf = np.zeros(n, dtype=np.float32)
         detected = np.zeros(n, dtype=bool)
 
-        # Stage 1: MediaPipe keypoint extraction (per-image, unavoidable)
+        # Stage 1: keypoint extraction.
         feature_buffer: list[np.ndarray] = []
         feature_indices: list[int] = []
         for i, img in enumerate(images):
@@ -241,7 +187,7 @@ class ClassicalPredictor:
             feature_buffer.append(vec)
             feature_indices.append(i)
 
-        # Stage 2: batched classifier inference on the detected subset
+        # Stage 2: batched classifier inference.
         if feature_buffer:
             X = np.stack(feature_buffer, axis=0)
             probs = self.classifier.predict_proba(X)   # batched, big speedup
@@ -258,7 +204,7 @@ class ClassicalPredictor:
 
 
 class DeepPredictor:
-    """MobileNetV3 (with temperature scaling) on perturbed images."""
+    """MobileNetV3 inference on perturbed images."""
 
     def __init__(self, ckpt_path: Path, meta_path: Path) -> None:
         import torch
@@ -315,20 +261,18 @@ class DeepPredictor:
         return y_pred, max_conf, detected
 
 
-# ============================================================
 # Metrics per (model, perturbation, severity)
-# ============================================================
 
 @dataclass
 class CellMetrics:
-    """One row of the robustness results table."""
+    """One result row for a model/perturbation/severity cell."""
     model: str
     perturbation: str
     severity: float
     n_total: int
-    detection_rate: float       # fraction of samples MediaPipe handled (1.0 for DL)
-    accuracy: float             # overall accuracy treating non-detections as wrong
-    accuracy_when_detected: float  # accuracy among detected samples
+    detection_rate: float
+    accuracy: float
+    accuracy_when_detected: float
     macro_f1: float
     abstention_rate_at_075: float
     selective_acc_at_075: float
@@ -347,17 +291,16 @@ def evaluate_cell(
     """Aggregate per-sample arrays into a single CellMetrics row."""
     n = len(y_true)
 
-    # Overall accuracy: treats non-detections as wrong (-1 != any true label)
+    # Overall accuracy; non-detections are counted as wrong.
     overall_acc = float((y_pred == y_true).mean())
 
-    # Accuracy among detected only
+    # Accuracy on detected samples only.
     if detected.any():
         acc_when_det = float((y_pred[detected] == y_true[detected]).mean())
     else:
         acc_when_det = 0.0
 
-    # macro-F1 across all samples (non-detections count as errors)
-    # We replace -1 with a sentinel that's not a valid class to ensure they count as misses.
+    # Macro-F1 across all samples.
     y_pred_safe = np.where(y_pred < 0, -1, y_pred)
     try:
         f1 = float(f1_score(y_true, y_pred_safe, average="macro",
@@ -366,13 +309,13 @@ def evaluate_cell(
     except Exception:
         f1 = 0.0
 
-    # Selective behaviour at tau among detected samples
+    # Selective metrics at tau.
     accepted = detected & (max_conf >= tau)
     if accepted.any():
         sel_acc = float((y_pred[accepted] == y_true[accepted]).mean())
     else:
         sel_acc = 0.0
-    abstention = 1.0 - float(accepted.mean())  # fraction of n that we did NOT accept
+    abstention = 1.0 - float(accepted.mean())
 
     return CellMetrics(
         model=model_name,
@@ -388,9 +331,7 @@ def evaluate_cell(
     )
 
 
-# ============================================================
 # Plotting
-# ============================================================
 
 def _x_label_for(pert_name: str) -> str:
     return PERTURBATIONS[pert_name][2]
@@ -401,7 +342,7 @@ def plot_perturbation(
     cells: list[CellMetrics],
     out_path: Path,
 ) -> None:
-    """For one perturbation, plot accuracy vs severity for all models."""
+    """Plot accuracy and detection rate vs severity for one perturbation."""
     import matplotlib.pyplot as plt
 
     colours = {"svm": "#1f77b4", "rf": "#ff7f0e", "mobilenet": "#2ca02c"}
@@ -409,7 +350,7 @@ def plot_perturbation(
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.5), sharex=True)
 
-    # Group cells by model
+    # Group rows by model.
     models = sorted({c.model for c in cells})
     for m in models:
         rows = sorted([c for c in cells if c.model == m], key=lambda c: c.severity)
@@ -442,7 +383,7 @@ def plot_summary(
     all_cells: list[CellMetrics],
     out_path: Path,
 ) -> None:
-    """4-panel grid: one panel per perturbation, accuracy vs severity."""
+    """4-panel summary plot (one panel per perturbation)."""
     import matplotlib.pyplot as plt
 
     colours = {"svm": "#1f77b4", "rf": "#ff7f0e", "mobilenet": "#2ca02c"}
@@ -476,9 +417,7 @@ def plot_summary(
     print(f"[plot] saved {out_path}")
 
 
-# ============================================================
 # Main experiment loop
-# ============================================================
 
 def run_experiment(
     test_items: list[TestImage],
@@ -486,14 +425,7 @@ def run_experiment(
     perturbations: dict[str, tuple[Callable, list[float], str]],
     progress: bool = True,
 ) -> list[CellMetrics]:
-    """Outer loop over (perturbation, severity); inner loop loads images.
-
-    `predictors` may contain a mix of:
-      - single predictors (have predict_batch returning a triple)
-      - group predictors  (have predict_batch returning a dict of triples)
-
-    Group predictors are detected by their class name 'ClassicalGroup'.
-    """
+    """Loop over perturbations/severities and collect cell metrics."""
     all_cells: list[CellMetrics] = []
     y_true = np.array([t.label for t in test_items], dtype=np.int64)
 
@@ -502,7 +434,7 @@ def run_experiment(
             label = f"{pert_name} @ {severity}"
             print(f"\n[run] {label}")
 
-            # Load + perturb everything in memory once per (pert, severity) cell
+            # Load and perturb one full cell.
             perturbed: list[Image.Image] = []
             iterator = test_items
             if progress:
@@ -516,13 +448,13 @@ def run_experiment(
                         img = pert_fn(raw_rgb, severity)
                     perturbed.append(img.copy())
 
-            # Run each predictor on the same perturbed batch
+            # Run each predictor on the same perturbed batch.
             for key, predictor in predictors.items():
                 t0 = __import__("time").time()
                 out = predictor.predict_batch(perturbed)
                 elapsed = __import__("time").time() - t0
 
-                # Group predictor: dict of model_name -> triple
+                # Group predictor returns one result per model.
                 if isinstance(out, dict):
                     for mname, (y_pred, max_conf, detected) in out.items():
                         cell = evaluate_cell(
@@ -537,7 +469,7 @@ def run_experiment(
                               f"abst={cell.abstention_rate_at_075:.3f}")
                     print(f"  (group inference {elapsed:.1f}s, MediaPipe shared)")
                 else:
-                    # Single predictor
+                    # Single predictor.
                     y_pred, max_conf, detected = out
                     cell = evaluate_cell(
                         model_name=key, pert_name=pert_name, severity=severity,
@@ -550,15 +482,13 @@ def run_experiment(
                           f"sel_acc={cell.selective_acc_at_075:.4f}  "
                           f"abst={cell.abstention_rate_at_075:.3f}  "
                           f"({elapsed:.1f}s)")
-            # release memory for this cell
+            # Release memory for this cell.
             del perturbed
 
     return all_cells
 
 
-# ============================================================
 # Entry point
-# ============================================================
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
@@ -568,8 +498,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--figures-dir", default="reports/figures")
     p.add_argument(
         "--max-test-samples", type=int, default=None,
-        help="if set, subsample test set for a quicker debug run "
-             "(stratified would be ideal; this is just a head-cut by ordering)",
+        help="if set, subsample test set for a quicker debug run",
     )
     p.add_argument(
         "--skip", nargs="*", default=[],
@@ -586,17 +515,17 @@ def main() -> None:
     outputs_dir = Path(args.outputs_dir)
     figures_dir = Path(args.figures_dir)
 
-    # ---- Test set ----
+    # Test set
     test_items, class_names = collect_test_images(data_dir / "test")
     print(f"[init] test set: {len(test_items)} images, {len(class_names)} classes")
     if args.max_test_samples is not None and args.max_test_samples < len(test_items):
-        # Take every Nth item to retain rough class balance
+        # Take every Nth item for a quick pass.
         step = len(test_items) // args.max_test_samples
         test_items = test_items[::step][:args.max_test_samples]
         print(f"[init] subsampled to {len(test_items)} for debug")
 
-    # ---- Predictors ----
-    # Use ClassicalGroup so SVM and RF share a single MediaPipe pass.
+    # Predictors
+    # Use ClassicalGroup so SVM and RF share one MediaPipe pass.
     print("[init] loading classical group (SVM + RF, shared MediaPipe)...")
     classical_group = ClassicalGroup({
         "svm": ckpt_dir / "keypoint_svm.joblib",
@@ -610,20 +539,20 @@ def main() -> None:
     )
 
     predictors: dict[str, object] = {
-        "classical": classical_group,   # produces both svm + rf rows per cell
+        "classical": classical_group,
         "mobilenet": mn_pred,
     }
 
-    # ---- Perturbations to run ----
+    # Perturbations to run
     active_perturbations = {
         k: v for k, v in PERTURBATIONS.items() if k not in args.skip
     }
     print(f"[init] perturbations: {list(active_perturbations.keys())}")
 
-    # ---- Run ----
+    # Run
     cells = run_experiment(test_items, predictors, active_perturbations)
 
-    # ---- Save ----
+    # Save
     outputs_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = outputs_dir / "robustness_metrics.json"
     metrics_path.write_text(json.dumps({
@@ -633,7 +562,7 @@ def main() -> None:
     }, indent=2))
     print(f"\n[save] {metrics_path}")
 
-    # ---- Plots ----
+    # Plots
     for pert_name in active_perturbations:
         pert_cells = [c for c in cells if c.perturbation == pert_name]
         plot_perturbation(pert_name, pert_cells,
@@ -641,7 +570,7 @@ def main() -> None:
 
     plot_summary(cells, figures_dir / "robustness_summary.png")
 
-    # ---- Cleanup ----
+    # Cleanup
     classical_group.close()
     print("\n[done] robustness experiment complete.")
 

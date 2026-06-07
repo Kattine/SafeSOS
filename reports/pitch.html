@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SafeSOS // Pitch Deck</title>
+<style>
+/* ============================================================
+   ROOT TOKENS — identical to the SafeSOS demo
+   ============================================================ */
+:root {
+    --bg-0:       #1a1a1c;
+    --bg-1:       #232325;
+    --bg-2:       #2a2b2e;
+    --bg-card:    #1f2022;
+    --bg-card-2: #2a2b2e;
+    --border:     #34363b;
+    --border-hi: #4a4d54;
+    --text:       #e9ebef;
+    --text-dim:   #a8acb5;
+    --text-mute:  #6f747e;
+    --accent:     #2ecc71;
+    --alert:      #ff5566;
+    --warning:    #f5a623;
+    --grid:       rgba(180, 185, 200, 0.025);
+    --mono: "JetBrains Mono", "SF Mono", "Menlo", "Consolas", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body {
+    margin: 0; padding: 0;
+    height: 100%; width: 100%;
+    overflow: hidden;
+    font-family: var(--sans);
+    color: var(--text);
+    background: linear-gradient(180deg, #1c1c20 0%, #2c2c32 50%, #1c1c20 100%);
+    position: relative;
+}
+
+/* SILVER SPOTLIGHTS — rotating across viewport */
+body::before {
+    content: "";
+    position: fixed;
+    top: -50%; left: -50%;
+    width: 200%; height: 200%;
+    background:
+        radial-gradient(circle at 25% 30%,
+                        rgba(240, 245, 255, 0.75) 0%,
+                        rgba(220, 228, 245, 0.35) 15%,
+                        rgba(180, 190, 210, 0.10) 30%,
+                        transparent 50%),
+        radial-gradient(circle at 75% 70%,
+                        rgba(230, 238, 252, 0.65) 0%,
+                        rgba(200, 210, 230, 0.28) 18%,
+                        rgba(160, 170, 195, 0.08) 32%,
+                        transparent 52%);
+    filter: blur(35px);
+    animation: silver-flow 15s linear infinite;
+    pointer-events: none;
+    z-index: 0;
+}
+@keyframes silver-flow {
+    0%   { transform: rotate(0deg)   scale(1.0); }
+    25%  { transform: rotate(90deg)  scale(1.15); }
+    50%  { transform: rotate(180deg) scale(1.0); }
+    75%  { transform: rotate(270deg) scale(0.88); }
+    100% { transform: rotate(360deg) scale(1.0); }
+}
+
+/* GRID overlay */
+body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.7;
+}
+
+/* GREEN LASER LAYER */
+.laser-stage {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+    mix-blend-mode: screen;
+}
+.laser-stage svg { width: 100%; height: 100%; display: block; }
+.beam-a { transform-origin: 50% 50%;
+          animation: beam-a-pan 19s ease-in-out infinite alternate;
+          opacity: 0.85; }
+.beam-b { transform-origin: 50% 50%;
+          animation: beam-b-pan 26s ease-in-out infinite alternate;
+          opacity: 0.55; }
+.beam-c { transform-origin: 50% 50%;
+          animation: beam-c-pan 34s ease-in-out infinite alternate;
+          opacity: 0.4; }
+@keyframes beam-a-pan {
+    0%   { transform: rotate(-18deg) translateY(-30px); }
+    50%  { transform: rotate(6deg)   translateY(40px);  }
+    100% { transform: rotate(20deg)  translateY(-10px); }
+}
+@keyframes beam-b-pan {
+    0%   { transform: rotate(14deg)  translateY(60px);  }
+    50%  { transform: rotate(-4deg)  translateY(-20px); }
+    100% { transform: rotate(-22deg) translateY(30px);  }
+}
+@keyframes beam-c-pan {
+    0%   { transform: rotate(-8deg)  translateY(-50px); }
+    50%  { transform: rotate(10deg)  translateY(10px);  }
+    100% { transform: rotate(2deg)   translateY(80px);  }
+}
+
+/* SLIDES CONTAINER */
+.deck {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+}
+.slide {
+    position: absolute;
+    inset: 0;
+    padding: 4vh 6vw;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.4s ease;
+    display: flex;
+    flex-direction: column;
+}
+.slide.active { opacity: 1; visibility: visible; }
+
+/* SLIDE CHROME (top + bottom strips like the demo) */
+.slide-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 1px solid var(--border-hi);
+    padding-bottom: 0.7rem;
+    margin-bottom: 2.5rem;
+}
+.brand-row {
+    display: flex; align-items: baseline; gap: 0.6rem;
+}
+.brand-mark {
+    color: var(--alert);
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    animation: brand-glow 3s ease-in-out infinite;
+}
+@keyframes brand-glow {
+    0%, 100% { opacity: 0.8; text-shadow: 0 0 6px rgba(255, 85, 102, 0.4); }
+    50%      { opacity: 1.0; text-shadow: 0 0 14px rgba(255, 85, 102, 0.9); }
+}
+.brand-name {
+    font-size: 1.4rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+.brand-version {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--text-mute);
+    letter-spacing: 0.08em;
+    padding-left: 0.6rem;
+    border-left: 1px solid var(--border);
+}
+
+.slide-num {
+    font-family: var(--mono);
+    color: var(--text-mute);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+}
+
+.slide-bottom {
+    margin-top: auto;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--text-mute);
+    letter-spacing: 0.1em;
+    display: flex;
+    justify-content: space-between;
+}
+.footer-sep { color: var(--alert); padding: 0 0.5rem; }
+
+/* PROGRESS BAR */
+.progress {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.04);
+    z-index: 10;
+}
+.progress-bar {
+    height: 100%;
+    background: var(--alert);
+    transition: width 0.3s ease;
+    box-shadow: 0 0 8px var(--alert);
+}
+
+/* TAGS */
+.tag-row { display: flex; gap: 0.5rem; }
+.tag {
+    padding: 0.3rem 0.7rem;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    border: 1px solid;
+}
+.tag-red  { background: rgba(255, 85, 102, 0.1);
+            color: var(--alert); border-color: rgba(255, 85, 102, 0.4); }
+.tag-grey { background: rgba(108, 122, 137, 0.1);
+            color: var(--text-dim); border-color: var(--border-hi); }
+.tag-green { background: rgba(46, 204, 113, 0.1);
+             color: var(--accent); border-color: rgba(46, 204, 113, 0.4); }
+
+/* FRAME LABEL */
+.frame-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+    margin-bottom: 0.6rem;
+    display: flex; align-items: center; gap: 0.5rem;
+}
+.dot-pulse {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--alert);
+    animation: dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.3; }
+}
+
+/* SLIDE BODY: shared elements */
+.slide-title {
+    font-size: 4rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin: 0 0 1.2rem 0;
+}
+.slide-title .accent { color: var(--alert); }
+.slide-title .green  { color: var(--accent); }
+.slide-subtitle {
+    font-size: 1.3rem;
+    color: var(--text-dim);
+    font-weight: 400;
+    max-width: 900px;
+    line-height: 1.5;
+    margin-bottom: 1.8rem;
+}
+
+/* CORNER BRACKETS BOX (like message card) */
+.bracket-card {
+    position: relative;
+    background: var(--bg-card);
+    border: 1px solid var(--border-hi);
+    border-radius: 6px;
+    padding: 1.6rem 1.8rem;
+    margin: 0.4rem 0;
+}
+.corner { position: absolute; width: 14px; height: 14px;
+          border: 2px solid var(--accent); }
+.bracket-card.alert .corner { border-color: var(--alert); }
+.tl { top: 6px; left: 6px;  border-right: none; border-bottom: none; }
+.tr { top: 6px; right: 6px; border-left:  none; border-bottom: none; }
+.bl { bottom: 6px; left: 6px;  border-right: none; border-top: none; }
+.br { bottom: 6px; right: 6px; border-left:  none; border-top: none; }
+
+/* ============================================================
+   SLIDE 1: HOOK
+   ============================================================ */
+.slide-hook .hook-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin-top: 2rem;
+}
+.hook-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.8rem 1.4rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+.hook-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 2px;
+    background: var(--alert);
+    box-shadow: 0 0 10px var(--alert);
+}
+.hook-icon {
+    font-size: 3.5rem;
+    margin-bottom: 0.8rem;
+    filter: grayscale(0.2) brightness(1.1);
+}
+.hook-card h3 {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+    margin: 0 0 0.5rem 0;
+    font-weight: 600;
+}
+.hook-card p {
+    color: var(--text);
+    font-size: 1rem;
+    line-height: 1.4;
+    margin: 0;
+}
+
+/* ============================================================
+   SLIDE 2: PROBLEM
+   ============================================================ */
+.problem-compare {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 2rem;
+    align-items: center;
+    margin: 2rem 0;
+}
+.problem-col {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.8rem;
+    text-align: center;
+}
+.problem-col.good { border-color: rgba(46, 204, 113, 0.5); }
+.problem-col.bad  { border-color: rgba(255, 85, 102, 0.5); }
+.problem-col .pct {
+    font-family: var(--mono);
+    font-size: 3.5rem;
+    font-weight: 800;
+    margin-bottom: 0.5rem;
+}
+.problem-col.good .pct { color: var(--accent); }
+.problem-col.bad  .pct { color: var(--alert); }
+.problem-col h4 {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+    margin: 0 0 0.6rem 0;
+}
+.problem-col p { margin: 0; color: var(--text); font-size: 0.95rem; }
+.problem-arrow {
+    font-family: var(--mono);
+    font-size: 2.5rem;
+    color: var(--text-mute);
+}
+.problem-takeaway {
+    background: rgba(255, 85, 102, 0.05);
+    border-left: 3px solid var(--alert);
+    padding: 1rem 1.4rem;
+    font-size: 1.1rem;
+    margin-top: 1.5rem;
+}
+
+/* ============================================================
+   SLIDE 3: VOCABULARY
+   ============================================================ */
+.vocab-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.8rem;
+    margin: 1.5rem 0;
+}
+.vocab-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.9rem 0.7rem;
+    text-align: center;
+}
+.vocab-emoji { font-size: 1.8rem; display: block; margin-bottom: 0.3rem; }
+.vocab-name {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.3rem;
+}
+.vocab-msg { color: var(--text); font-size: 0.78rem; line-height: 1.25; }
+
+/* ============================================================
+   SLIDE 4: DEMO
+   ============================================================ */
+.slide-demo { justify-content: center; align-items: center; }
+.demo-title {
+    font-size: 7rem;
+    font-weight: 800;
+    color: var(--accent);
+    text-shadow: 0 0 40px rgba(46, 204, 113, 0.5);
+    letter-spacing: -0.04em;
+    margin: 0;
+    animation: demo-pulse 2s ease-in-out infinite;
+}
+@keyframes demo-pulse {
+    0%, 100% { text-shadow: 0 0 40px rgba(46, 204, 113, 0.5); }
+    50%      { text-shadow: 0 0 60px rgba(46, 204, 113, 0.8); }
+}
+.demo-sub {
+    font-family: var(--mono);
+    color: var(--text-dim);
+    letter-spacing: 0.2em;
+    font-size: 0.9rem;
+    margin-top: 1.5rem;
+}
+.demo-url {
+    margin-top: 2.5rem;
+    padding: 0.8rem 1.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 1rem;
+    box-shadow: 0 0 20px rgba(46, 204, 113, 0.2);
+}
+
+/* ============================================================
+   SLIDE 5: RESULTS TABLE
+   ============================================================ */
+.results-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1.5rem;
+    font-size: 1.1rem;
+}
+.results-table th, .results-table td {
+    padding: 1rem 1.2rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+.results-table th {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+.results-table td.num {
+    font-family: var(--mono);
+    text-align: right;
+}
+.results-table tr.winner td { color: var(--accent); font-weight: 700; }
+.results-table tr.calibration-winner td.aurc {
+    color: var(--accent);
+    font-weight: 700;
+}
+.results-table tr.raw-winner td.acc {
+    color: var(--alert);
+    font-weight: 700;
+}
+
+/* ============================================================
+   SLIDE 6 & 7: FIGURE SLIDES
+   ============================================================ */
+.figure-row {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+    flex: 1;
+}
+.figure-row img {
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid var(--border-hi);
+    background: white;
+    padding: 0.4rem;
+}
+.takeaway-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.takeaway-list li {
+    padding: 0.85rem 0;
+    border-bottom: 1px dashed var(--border);
+    font-size: 1.05rem;
+    line-height: 1.45;
+}
+.takeaway-list li:last-child { border-bottom: none; }
+.takeaway-list .num {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 1.4rem;
+    display: block;
+    margin-bottom: 0.2rem;
+}
+
+/* ============================================================
+   SLIDE 8 & 9: BULLETS
+   ============================================================ */
+.bullet-list {
+    list-style: none;
+    padding: 0;
+    margin-top: 2rem;
+}
+.bullet-list li {
+    background: var(--bg-card);
+    border-left: 3px solid var(--accent);
+    padding: 1.3rem 1.6rem;
+    margin-bottom: 1rem;
+    font-size: 1.15rem;
+    line-height: 1.5;
+    position: relative;
+}
+.bullet-list.limits li { border-left-color: var(--alert); }
+.bullet-list li strong {
+    display: block;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+    text-transform: uppercase;
+}
+.bullet-list.limits li strong { color: var(--alert); }
+
+/* ============================================================
+   SLIDE 10: CLOSE
+   ============================================================ */
+.slide-close { justify-content: center; align-items: center; text-align: center; }
+.close-brand {
+    font-size: 6rem;
+    font-weight: 800;
+    color: var(--text);
+    margin: 0;
+    letter-spacing: -0.04em;
+}
+.close-brand .sos { color: var(--alert); }
+.close-tagline {
+    color: var(--text-dim);
+    font-family: var(--mono);
+    letter-spacing: 0.2em;
+    font-size: 0.9rem;
+    margin: 0.8rem 0 2.5rem 0;
+}
+.close-links {
+    display: flex;
+    gap: 2rem;
+    justify-content: center;
+    margin-bottom: 2rem;
+}
+.close-link {
+    background: var(--bg-card);
+    border: 1px solid var(--border-hi);
+    padding: 1rem 1.6rem;
+    border-radius: 6px;
+    font-family: var(--mono);
+}
+.close-link .label {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--text-mute);
+    letter-spacing: 0.15em;
+    margin-bottom: 0.4rem;
+}
+.close-link .url { color: var(--accent); font-size: 0.95rem; }
+.close-thanks {
+    font-family: var(--mono);
+    color: var(--alert);
+    letter-spacing: 0.2em;
+    margin-top: 1.5rem;
+    font-size: 1rem;
+}
+
+/* RESPONSIVE: tighten on smaller viewports */
+@media (max-width: 1100px) {
+    .slide-title { font-size: 3rem; }
+    .demo-title { font-size: 5rem; }
+    .vocab-grid { grid-template-columns: repeat(3, 1fr); }
+    .figure-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- GREEN LASER LAYER -->
+<div class="laser-stage">
+  <svg viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid slice">
+    <defs>
+      <filter id="dust" x="-30%" y="-30%" width="160%" height="160%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.006 0.04" numOctaves="2" seed="3">
+          <animate attributeName="seed" values="3;43;83;43;3" dur="14s" repeatCount="indefinite"/>
+        </feTurbulence>
+        <feDisplacementMap in="SourceGraphic" scale="42" xChannelSelector="R" yChannelSelector="G"/>
+        <feGaussianBlur stdDeviation="0.6"/>
+      </filter>
+      <linearGradient id="beamGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%"   stop-color="#2ecc71" stop-opacity="0"/>
+        <stop offset="12%"  stop-color="#2ecc71" stop-opacity="0.35"/>
+        <stop offset="45%"  stop-color="#aef5c8" stop-opacity="0.95"/>
+        <stop offset="55%"  stop-color="#ffffff" stop-opacity="1"/>
+        <stop offset="65%"  stop-color="#aef5c8" stop-opacity="0.95"/>
+        <stop offset="88%"  stop-color="#2ecc71" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="#2ecc71" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="beamGradDim" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%"   stop-color="#2ecc71" stop-opacity="0"/>
+        <stop offset="20%"  stop-color="#2ecc71" stop-opacity="0.25"/>
+        <stop offset="50%"  stop-color="#8df0b3" stop-opacity="0.75"/>
+        <stop offset="80%"  stop-color="#2ecc71" stop-opacity="0.25"/>
+        <stop offset="100%" stop-color="#2ecc71" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <g filter="url(#dust)">
+      <rect class="beam-a" x="-80" y="220" width="1400" height="16" fill="url(#beamGrad)"/>
+      <rect class="beam-b" x="-80" y="380" width="1400" height="11" fill="url(#beamGradDim)"/>
+      <rect class="beam-c" x="-80" y="510" width="1400" height="7"  fill="url(#beamGradDim)"/>
+    </g>
+  </svg>
+</div>
+
+<!-- SLIDE DECK -->
+<div class="deck">
+
+<!-- ============================================================
+     SLIDE 1: HOOK
+     ============================================================ -->
+<section class="slide slide-hook active">
+    <div class="slide-top">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+            <span class="brand-version">v0.1 / PITCH</span>
+        </div>
+        <div class="tag-row">
+            <span class="tag tag-red">SELECTIVE PREDICTION</span>
+            <span class="tag tag-grey">MOBILENETV3</span>
+        </div>
+    </div>
+
+    <h1 class="slide-title">Three silent <span class="accent">emergencies.</span></h1>
+    <p class="slide-subtitle">
+        Three people. Three crises. One shared constraint:
+        they need to communicate distress without speaking.
+    </p>
+
+    <div class="hook-grid">
+        <div class="hook-card">
+            <div class="hook-icon">🏥</div>
+            <h3>ICU / VENTILATED</h3>
+            <p>Patients on ventilators who can't speak when something is wrong.</p>
+        </div>
+        <div class="hook-card">
+            <div class="hook-icon">👂</div>
+            <h3>HEARING IMPAIRED</h3>
+            <p>Deaf users in environments where no signing partner is available.</p>
+        </div>
+        <div class="hook-card">
+            <div class="hook-icon">🆘</div>
+            <h3>COVERT DISTRESS</h3>
+            <p>Abuse victims using covert distress signals next to their abuser.</p>
+        </div>
+    </div>
+
+    <div class="slide-bottom">
+        <span>SAFESOS // SILENT EMERGENCY COMMUNICATION</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">01 / 10</span>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 2: PROBLEM
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-top">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+        </div>
+        <div class="frame-label">
+            <span class="dot-pulse"></span> PROBLEM FRAMING
+        </div>
+    </div>
+
+    <h1 class="slide-title">Raw accuracy is the <span class="accent">wrong</span> target.</h1>
+    <p class="slide-subtitle">
+        State-of-the-art hand gesture systems report 99%+ on benchmarks.
+        But they're evaluated assuming the model <em>must</em> always predict.
+    </p>
+
+    <div class="problem-compare">
+        <div class="problem-col good">
+            <h4>BENCHMARK</h4>
+            <div class="pct">99%</div>
+            <p>Raw classification accuracy on a clean test set.</p>
+        </div>
+        <div class="problem-arrow">→</div>
+        <div class="problem-col bad">
+            <h4>DEPLOYED</h4>
+            <div class="pct">FAIL</div>
+            <p>A confident "ALL CLEAR" when a user is signalling distress.</p>
+        </div>
+    </div>
+
+    <div class="problem-takeaway">
+        <strong style="color: var(--alert); font-family: var(--mono);">OUR POSITION:</strong>
+        <em>Selective accuracy</em> — accuracy conditional on the model choosing to respond —
+        is the right evaluation target for high-stakes accessibility tools.
+    </div>
+
+    <div class="slide-bottom">
+        <span>PROBLEM FRAMING</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">02 / 10</span>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 3: SOLUTION + VOCAB
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-top">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+        </div>
+        <div class="frame-label">
+            <span class="dot-pulse"></span> SOLUTION OVERVIEW
+        </div>
+    </div>
+
+    <h1 class="slide-title">A <span class="green">9-gesture</span> emergency vocabulary.</h1>
+    <p class="slide-subtitle">
+        Curated from HaGRID + a no-gesture abstention anchor.
+        Three model families. Selective prediction at τ = 0.75.
+    </p>
+
+    <div class="vocab-grid">
+        <div class="vocab-item"><span class="vocab-emoji">📞</span>
+            <div class="vocab-name">call</div>
+            <div class="vocab-msg">"I need to make a call"</div></div>
+        <div class="vocab-item"><span class="vocab-emoji">✋</span>
+            <div class="vocab-name">palm</div>
+            <div class="vocab-msg">"I need help"</div></div>
+        <div class="vocab-item"><span class="vocab-emoji">🤚</span>
+            <div class="vocab-name">stop</div>
+            <div class="vocab-msg">"Stop, do not approach"</div></div>
+        <div class="vocab-item"><span class="vocab-emoji">✊</span>
+            <div class="vocab-name">fist</div>
+            <div class="vocab-msg">"Alert, I am in danger"</div></div>
+        <div class="vocab-item"><span class="vocab-emoji">👌</span>
+            <div class="vocab-name">ok</div>
+            <div class="vocab-msg">"I am OK"</div></div>
+        <div class="vocab-item"><span class="vocab-emoji">✌️</span>
+            <div class="vocab-name">peace</div>
+            <div class="vocab-msg">"Confirmed safe"</div></div>
+        <div class="vocab-item"><span class="vocab-emoji">☝️</span>
+            <div class="vocab-name">one</div>
+            <div class="vocab-msg">"One"</div></div>
+        <div class="vocab-item"><span class="vocab-emoji">✌️</span>
+            <div class="vocab-name">two_up</div>
+            <div class="vocab-msg">"Two"</div></div>
+        <div class="vocab-item"><span class="vocab-emoji">🤟</span>
+            <div class="vocab-name">three</div>
+            <div class="vocab-msg">"Three"</div></div>
+        <div class="vocab-item" style="border-color: var(--alert);">
+            <span class="vocab-emoji">⊘</span>
+            <div class="vocab-name" style="color: var(--alert);">abstain</div>
+            <div class="vocab-msg">model refuses to predict</div></div>
+    </div>
+
+    <div class="slide-bottom">
+        <span>SOLUTION OVERVIEW</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">03 / 10</span>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 4: LIVE DEMO
+     ============================================================ -->
+<section class="slide slide-demo">
+    <div class="slide-top" style="position: absolute; top: 4vh; left: 6vw; right: 6vw;">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+        </div>
+        <div class="tag-row">
+            <span class="tag tag-green">LIVE</span>
+        </div>
+    </div>
+
+    <h1 class="demo-title">LIVE DEMO</h1>
+    <div class="demo-sub">SWITCH TO BROWSER · FOUR GESTURES · TWO MINUTES</div>
+    <div class="demo-url">huggingface.co/spaces/zkmine/safesos</div>
+
+    <div class="slide-bottom" style="position: absolute; bottom: 4vh; left: 6vw; right: 6vw;">
+        <span>LIVE DEMO</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">04 / 10</span>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 5: RESULTS TABLE
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-top">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+        </div>
+        <div class="frame-label">
+            <span class="dot-pulse"></span> MAIN RESULTS
+        </div>
+    </div>
+
+    <h1 class="slide-title">Three models. <span class="green">A surprise.</span></h1>
+    <p class="slide-subtitle">
+        On clean test data, the classical SVM beats the deep model by 4
+        percentage points. Raw accuracy says: classical wins.
+    </p>
+
+    <table class="results-table">
+        <thead>
+            <tr>
+                <th>MODEL</th>
+                <th>ACCURACY ↑</th>
+                <th>MACRO-F1 ↑</th>
+                <th>AURC ↓</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Majority baseline</td>
+                <td class="num">0.1034</td>
+                <td class="num">0.0187</td>
+                <td class="num">—</td>
+            </tr>
+            <tr>
+                <td>MediaPipe + Random Forest</td>
+                <td class="num">0.9274</td>
+                <td class="num">0.9268</td>
+                <td class="num">0.00886</td>
+            </tr>
+            <tr class="raw-winner">
+                <td>MediaPipe + SVM (Platt)</td>
+                <td class="num acc">0.9680</td>
+                <td class="num">0.9678</td>
+                <td class="num">0.01393</td>
+            </tr>
+            <tr class="calibration-winner">
+                <td>MobileNetV3-Small (T=1.10)</td>
+                <td class="num">0.9271</td>
+                <td class="num">0.9269</td>
+                <td class="num aurc">0.00702</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div style="margin-top: 1.5rem; font-family: var(--mono); font-size: 0.75rem;
+                color: var(--text-dim); letter-spacing: 0.1em;">
+        <span style="color: var(--alert);">■</span> RAW ACCURACY WINNER
+        &nbsp;&nbsp;&nbsp;
+        <span style="color: var(--accent);">■</span> CALIBRATION WINNER (AURC)
+    </div>
+
+    <div class="slide-bottom">
+        <span>MAIN RESULTS</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">05 / 10</span>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 6: RISK-COVERAGE
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-top">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+        </div>
+        <div class="frame-label">
+            <span class="dot-pulse"></span> RISK – COVERAGE ANALYSIS
+        </div>
+    </div>
+
+    <h1 class="slide-title">The <span class="green">ranking inverts.</span></h1>
+
+    <div class="figure-row">
+        <img src="figures/risk_coverage.png" alt="Risk-coverage curve"
+             onerror="this.style.display='none';
+                      this.nextElementSibling.style.display='flex';">
+        <div class="bracket-card" style="display:none;
+             height:300px; align-items:center; justify-content:center;
+             flex-direction:column;">
+            <div class="corner tl"></div><div class="corner tr"></div>
+            <div class="corner bl"></div><div class="corner br"></div>
+            <div style="text-align:center; color: var(--text-dim);
+                        font-family: var(--mono);">
+                <div style="font-size: 0.9rem; margin-bottom: 0.5rem;">
+                    figures/risk_coverage.png
+                </div>
+                <div style="font-size: 0.75rem; color: var(--text-mute);">
+                    drop this file in <code>figures/</code> to render
+                </div>
+            </div>
+        </div>
+
+        <ul class="takeaway-list">
+            <li>
+                <span class="num">49.6% ↓</span>
+                MobileNet AURC vs SVM AURC.
+                Calibrated softmax beats Platt scaling.
+            </li>
+            <li>
+                <span class="num">~85%</span>
+                The crossover coverage. Below this, MobileNet wins uniformly.
+            </li>
+            <li>
+                <span class="num">97.94%</span>
+                Selective accuracy at τ=0.75 — exceeding SVM's raw ceiling.
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide-bottom">
+        <span>RISK – COVERAGE</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">06 / 10</span>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 7: ROBUSTNESS
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-top">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+        </div>
+        <div class="frame-label">
+            <span class="dot-pulse"></span> ROBUSTNESS UNDER PERTURBATION
+        </div>
+    </div>
+
+    <h1 class="slide-title">An <span class="green">asymmetric</span> robustness pattern.</h1>
+
+    <div class="figure-row">
+        <img src="figures/robustness_summary.png" alt="Robustness 4-panel"
+             onerror="this.style.display='none';
+                      this.nextElementSibling.style.display='flex';">
+        <div class="bracket-card" style="display:none;
+             height:300px; align-items:center; justify-content:center;
+             flex-direction:column;">
+            <div class="corner tl"></div><div class="corner tr"></div>
+            <div class="corner bl"></div><div class="corner br"></div>
+            <div style="text-align:center; color: var(--text-dim);
+                        font-family: var(--mono);">
+                <div style="font-size: 0.9rem; margin-bottom: 0.5rem;">
+                    figures/robustness_summary.png
+                </div>
+                <div style="font-size: 0.75rem; color: var(--text-mute);">
+                    drop this file in <code>figures/</code> to render
+                </div>
+            </div>
+        </div>
+
+        <ul class="takeaway-list">
+            <li>
+                <span class="num">+17 pp</span>
+                MobileNet leads SVM under 15% brightness — MediaPipe
+                detection collapses to 67%.
+            </li>
+            <li>
+                <span class="num">+12 pp</span>
+                MobileNet leads under heavy blur and occlusion.
+            </li>
+            <li>
+                <span class="num">REVERSAL</span>
+                At 45° rotation, SVM wins (0.69 vs 0.55) — augmentation
+                trade-off, documented honestly.
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide-bottom">
+        <span>ROBUSTNESS</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">07 / 10</span>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 8: LIMITATIONS
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-top">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+        </div>
+        <div class="frame-label">
+            <span class="dot-pulse"></span> LIMITATIONS &amp; ETHICS
+        </div>
+    </div>
+
+    <h1 class="slide-title">Three <span class="accent">honest</span> limitations.</h1>
+
+    <ul class="bullet-list limits">
+        <li>
+            <strong>DATASET BIAS</strong>
+            HaGRID is primarily Eastern European subjects. Cross-demographic
+            performance has not been audited. Pre-deployment requirement.
+        </li>
+        <li>
+            <strong>NO PARTICIPATORY DESIGN</strong>
+            Vocabulary was curated by us, not co-designed with deaf,
+            hard-of-hearing, or aphasic communities the system targets.
+        </li>
+        <li>
+            <strong>RESEARCH PROTOTYPE — NOT A MEDICAL DEVICE</strong>
+            Selective prediction reduces, not eliminates, misrecognition risk.
+            Production deployment requires human-in-the-loop verification.
+        </li>
+    </ul>
+
+    <div class="slide-bottom">
+        <span>LIMITATIONS &amp; ETHICS</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">08 / 10</span>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 9: FUTURE WORK
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-top">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+        </div>
+        <div class="frame-label">
+            <span class="dot-pulse"></span> FUTURE WORK
+        </div>
+    </div>
+
+    <h1 class="slide-title">If we had <span class="green">another semester.</span></h1>
+
+    <ul class="bullet-list">
+        <li>
+            <strong>01 · PARTICIPATORY VOCABULARY</strong>
+            Co-design the gesture set with deaf and aphasic community members,
+            integrating established silent-distress conventions.
+        </li>
+        <li>
+            <strong>02 · DYNAMIC GESTURES</strong>
+            Extend the system to short-sequence gestures via a lightweight
+            temporal head — opens the door to ASL fragments.
+        </li>
+        <li>
+            <strong>03 · FAIRNESS AUDIT</strong>
+            Demographic and skin-tone audit of selective-prediction
+            behaviour, in line with recent fairness-in-abstention research.
+        </li>
+    </ul>
+
+    <div class="slide-bottom">
+        <span>FUTURE WORK</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">09 / 10</span>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 10: CLOSE
+     ============================================================ -->
+<section class="slide slide-close">
+    <div class="slide-top" style="position: absolute; top: 4vh; left: 6vw; right: 6vw;">
+        <div class="brand-row">
+            <span class="brand-mark">◣◢</span>
+            <span class="brand-name">SafeSOS</span>
+        </div>
+        <div class="tag-row">
+            <span class="tag tag-red">END</span>
+        </div>
+    </div>
+
+    <h1 class="close-brand">Safe<span class="sos">SOS</span></h1>
+    <div class="close-tagline">KNOW WHEN NOT TO PREDICT.</div>
+
+    <div class="close-links">
+        <div class="close-link">
+            <span class="label">LIVE DEMO</span>
+            <span class="url">huggingface.co/spaces/zkmine/safesos</span>
+        </div>
+        <div class="close-link">
+            <span class="label">CODE</span>
+            <span class="url">github.com/Kattine/SafeSOS</span>
+        </div>
+    </div>
+
+    <div class="close-thanks">— THANK YOU —</div>
+
+    <div class="slide-bottom" style="position: absolute; bottom: 4vh; left: 6vw; right: 6vw;">
+        <span>SAFESOS // CV PROJECT 2026</span>
+        <span class="footer-sep">//</span>
+        <span class="slide-num">10 / 10</span>
+    </div>
+</section>
+
+</div>
+
+<!-- PROGRESS BAR -->
+<div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+
+<!-- KEYBOARD NAVIGATION -->
+<script>
+const slides = document.querySelectorAll('.slide');
+let current = 0;
+
+function show(idx) {
+    slides.forEach((s, i) => s.classList.toggle('active', i === idx));
+    document.getElementById('progress-bar').style.width =
+        `${((idx + 1) / slides.length) * 100}%`;
+    current = idx;
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+        if (current < slides.length - 1) show(current + 1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        if (current > 0) show(current - 1);
+    } else if (e.key === 'Home') {
+        show(0);
+    } else if (e.key === 'End') {
+        show(slides.length - 1);
+    } else if (e.key === 'f' || e.key === 'F') {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen();
+    }
+});
+
+// Init progress bar
+show(0);
+
+// Touch / click navigation
+let touchStartX = 0;
+document.addEventListener('touchstart', e => touchStartX = e.touches[0].clientX);
+document.addEventListener('touchend', e => {
+    const diff = touchStartX - e.changedTouches[0].clientX;
+    if (Math.abs(diff) < 50) return;
+    if (diff > 0 && current < slides.length - 1) show(current + 1);
+    else if (diff < 0 && current > 0) show(current - 1);
+});
+</script>
+
+</body>
+</html>

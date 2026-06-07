@@ -1,9 +1,4 @@
-"""
-MobileNetV3-Small fine-tuned on 10-class gesture problem,
-with selective prediction via softmax thresholding + temperature scaling.
-
-This is the model deployed in the live app.
-"""
+"""Deep model wrapper used by SafeSOS inference."""
 
 from dataclasses import dataclass
 
@@ -37,21 +32,17 @@ class SelectiveMobileNet:
 
     def _build_model(self) -> nn.Module:
         net = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
-        # Replace the classifier head for our 10 classes
+        # Replace classifier head for project classes.
         in_features = net.classifier[-1].in_features
         net.classifier[-1] = nn.Linear(in_features, self.num_classes)
         return net.to(self.device)
 
     def predict_with_abstention(self, x: torch.Tensor) -> SelectivePrediction:
-        """Single-sample prediction with selective prediction logic.
-
-        Returns SelectivePrediction.abstained=True when max-softmax < threshold,
-        which is the core safety feature of the system.
-        """
+        """Single-sample prediction with abstention threshold."""
         self.model.eval()
         with torch.no_grad():
             logits = self.model(x.to(self.device))
-            # Temperature scaling for better-calibrated softmax
+            # Temperature scaling for probability calibration.
             scaled = logits / self.temperature
             probs = torch.softmax(scaled, dim=-1)
             max_prob, pred_idx = probs.max(dim=-1)

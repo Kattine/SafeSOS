@@ -1,10 +1,6 @@
-"""
-Main entry point for the SafeSOS application.
-Launches the Gradio Blocks interface for emergency gesture recognition.
+"""Entry point for launching the SafeSOS Gradio app."""
 
-Usage:
-    python main.py
-"""
+import os
 
 from app.interface import build_interface
 
@@ -12,14 +8,15 @@ from app.interface import build_interface
 def main() -> None:
     """Build and launch the Gradio app."""
     demo = build_interface()
-    # 127.0.0.1 (instead of 0.0.0.0) keeps the URL bar showing localhost,
-    # which is the only HTTP origin browsers will grant camera permission
-    # to without HTTPS. On HF Spaces, gradio handles HTTPS itself.
+    # Bind to 0.0.0.0 on Spaces, localhost in local runs.
+    on_hf_space = "SPACE_ID" in os.environ
+    server_name = "0.0.0.0" if on_hf_space else "127.0.0.1"
+
     demo.launch(
-        server_name="127.0.0.1",
+        server_name=server_name,
         server_port=7860,
         share=False,
-        show_error=True,     # surface tracebacks in the UI for easier debugging
+        show_error=True,
     )
 
 

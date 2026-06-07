@@ -1,23 +1,7 @@
-"""
-Classical ML pipeline for SafeSOS.
+"""Classical ML backend for SafeSOS.
 
-Pipeline:
-    Image -> MediaPipe Hands -> 21 (x, y, z) keypoints (63-d feature) -> SVM/RF
-                                                                          |
-                                                                          v
-                                                              Platt scaling for
-                                                              calibrated probabilities
-                                                              (needed for selective
-                                                               prediction)
-
-Why this design:
-- MediaPipe provides a strong, hand-specific feature extractor that compresses
-  a 224x224x3 image (~150k floats) into 63 floats, drastically reducing the
-  amount of data the classical model has to learn from.
-- SVM with Platt scaling produces probabilities that can be thresholded for
-  selective prediction, matching what we do for the deep model.
-- All keypoint extraction is done once and cached to .npz so we never re-run
-  MediaPipe during training or evaluation.
+Uses MediaPipe hand keypoints (63-d) with SVM/RF classifiers and calibrated
+probabilities for selective prediction.
 """
 
 from __future__ import annotations
@@ -28,22 +12,14 @@ from typing import Literal
 
 import numpy as np
 
-# MediaPipe is heavy and CPU-only; import lazily where used.
+# Import MediaPipe lazily where needed.
 
 
-# ============================================================
 # Keypoint extraction
-# ============================================================
 
 @dataclass
 class KeypointExtractorConfig:
-    """Configuration for MediaPipe-based keypoint extraction.
-
-    Uses the new `mp.tasks.vision.HandLandmarker` API. The older
-    `mp.solutions.hands` API is broken on Python 3.12+ (mediapipe issues
-    #6200, #6204, #6261), so we use the modern task-based API which
-    Google now recommends for all new projects.
-    """
+    """Configuration for MediaPipe keypoint extraction."""
     num_hands: int = 1                          # one dominant hand
     min_detection_confidence: float = 0.3       # permissive on detection
     min_presence_confidence: float = 0.3        # permissive on presence
@@ -51,8 +27,7 @@ class KeypointExtractorConfig:
     model_filename: str = "hand_landmarker.task"  # downloaded on first use
 
 
-# Public download URL for the off-the-shelf hand landmark model bundle.
-# This is the float16 variant published by Google AI Edge; ~7MB, no auth.
+# Public URL for MediaPipe hand landmark model.
 HAND_LANDMARKER_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
     "hand_landmarker/float16/1/hand_landmarker.task"
@@ -60,12 +35,7 @@ HAND_LANDMARKER_MODEL_URL = (
 
 
 class HandKeypointExtractor:
-    """Extracts 21 hand landmarks per image using MediaPipe's task API.
-
-    Designed as a drop-in replacement for the legacy `mp.solutions.hands`
-    wrapper: `extract()` returns either a (63,) float32 vector or None,
-    and `extract_batch()` returns (X, valid_mask) just like before.
-    """
+    """Extract 21 hand landmarks per image using MediaPipe Tasks API."""
 
     NUM_LANDMARKS = 21
     FEATURE_DIM = NUM_LANDMARKS * 3  # x, y, z per landmark -> 63
@@ -79,7 +49,7 @@ class HandKeypointExtractor:
         self.model_dir = Path(model_dir)
         self._detector = None  # lazy init: avoids importing mediapipe for unit tests
 
-    # ---- Model file management --------------------------------------
+    # Model file management
 
     def _ensure_model_file(self) -> Path:
         """Download the .task model bundle on first use, then cache locally."""
@@ -95,13 +65,12 @@ class HandKeypointExtractor:
         print(f"[mediapipe] model ready ({size_mb:.1f} MB)")
         return model_path
 
-    # ---- Detector lifecycle -----------------------------------------
+    # Detector lifecycle
 
     def _ensure_initialised(self) -> None:
         if self._detector is not None:
             return
-        # Use the modern task API (mediapipe.tasks.vision.HandLandmarker).
-        # The legacy `mp.solutions.hands` API is broken on Python 3.12+.
+        # Use MediaPipe Tasks API (works on Python 3.12+).
         import mediapipe as mp
         from mediapipe.tasks import python as mp_python
         from mediapipe.tasks.python import vision as mp_vision
@@ -129,16 +98,16 @@ class HandKeypointExtractor:
             or None if MediaPipe failed to detect a hand.
         """
         self._ensure_initialised()
-        # mediapipe's task API expects its own Image wrapper.
+        # MediaPipe task API uses its own Image wrapper.
         import mediapipe as mp
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
         result = self._detector.detect(mp_image)
         if not result.hand_landmarks:
             return None
-        # `result.hand_landmarks` is a list of hands; each is a list of 21 NormalizedLandmark
+        # Take the first detected hand.
         landmarks = result.hand_landmarks[0]
         if len(landmarks) != self.NUM_LANDMARKS:
-            # Defensive: in theory always 21, but bail if the API changes
+            # Defensive check in case API output changes.
             return None
         vec = np.empty(self.FEATURE_DIM, dtype=np.float32)
         for i, lm in enumerate(landmarks):
@@ -187,9 +156,7 @@ class HandKeypointExtractor:
             self._detector = None
 
 
-# ============================================================
-# Selective classification result
-# ============================================================
+# Selective prediction output
 
 @dataclass
 class SelectivePrediction:
@@ -199,19 +166,10 @@ class SelectivePrediction:
     abstained: bool
 
 
-# ============================================================
-# Keypoint classifier with calibration + selective prediction
-# ============================================================
+# Classifier with calibration + selective prediction
 
 class KeypointClassifier:
-    """Trains SVM or Random Forest on MediaPipe keypoints, with calibrated
-    probabilities for selective prediction.
-
-    Use:
-        clf = KeypointClassifier(backend="svm").fit(X_train, y_train, X_val, y_val)
-        y_pred = clf.predict(X_test)
-        sel = clf.predict_with_abstention(x_single, threshold=0.75)
-    """
+    """Train SVM or Random Forest on keypoints with calibrated probabilities."""
 
     def __init__(
         self,
@@ -224,15 +182,14 @@ class KeypointClassifier:
         self.classes_: np.ndarray | None = None
 
     def _make_base_model(self):
-        """Build the underlying estimator. Wrapped in CalibratedClassifierCV
-        downstream so probabilities are reliable."""
+        """Build the base estimator used before calibration."""
         if self.backend == "svm":
             from sklearn.svm import SVC
             return SVC(
                 kernel="rbf",
                 C=10.0,
                 gamma="scale",
-                probability=False,  # we will calibrate explicitly via CalibratedClassifierCV
+                probability=False,
                 random_state=self.random_state,
             )
         if self.backend == "rf":
@@ -252,17 +209,11 @@ class KeypointClassifier:
         X_val: np.ndarray | None = None,
         y_val: np.ndarray | None = None,
     ) -> "KeypointClassifier":
-        """Fit the model with Platt-scaled probabilities.
-
-        We use CalibratedClassifierCV with method='sigmoid' (Platt scaling)
-        and an internal 5-fold split, so X_val/y_val are not strictly
-        required, but if provided we can report validation metrics here.
-        """
+        """Fit model and calibrate probabilities with sigmoid scaling."""
         from sklearn.calibration import CalibratedClassifierCV
 
         base = self._make_base_model()
-        # cv=5 trains 5 base models on rotating splits; final probabilities
-        # are averaged. This is more reliable than probability=True in SVC.
+        # Use internal CV calibration for more stable probabilities.
         self.model = CalibratedClassifierCV(base, method="sigmoid", cv=5)
         self.model.fit(X_train, y_train)
         self.classes_ = self.model.classes_
@@ -287,10 +238,7 @@ class KeypointClassifier:
         x: np.ndarray,
         threshold: float = 0.75,
     ) -> SelectivePrediction:
-        """Single-sample selective prediction matching the deep-learning API.
-
-        Returns abstained=True when max calibrated probability < threshold.
-        """
+        """Single-sample selective prediction."""
         if x.ndim == 1:
             x = x.reshape(1, -1)
         proba = self.predict_proba(x)[0]
@@ -300,16 +248,16 @@ class KeypointClassifier:
             return SelectivePrediction(class_idx=None,
                                        confidence=confidence,
                                        abstained=True)
-        # Map array-index back to original class label
+        # Map probability index back to class label.
         class_label = int(self.classes_[idx])
         return SelectivePrediction(class_idx=class_label,
                                    confidence=confidence,
                                    abstained=False)
 
-    # ---- Persistence -------------------------------------------------
+    # Persistence
 
     def save(self, path: str | Path) -> None:
-        """Save with joblib (handles sklearn objects properly)."""
+        """Save model bundle with joblib."""
         import joblib
         joblib.dump({"model": self.model,
                      "backend": self.backend,
